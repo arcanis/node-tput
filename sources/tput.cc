@@ -72,6 +72,9 @@ static Local< Value > compile( char const * capability, Arguments const & args )
 
     HandleScope scope;
 
+    if ( ! capability )
+        return scope.Close( Null( ) );
+
     int pnum, pdef[ TPARM_MAX ] = { 0 };
 
     int fu[ TPARM_MAX ];
