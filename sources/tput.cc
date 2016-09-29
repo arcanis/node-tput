@@ -13,18 +13,17 @@
 
 enum ParameterType {
 
-    PARAMETER_UNKNOWN,
-
-    PARAMETER_STRING,
-    PARAMETER_INTEGER
+    PARAMETER_INTEGER = 0,
+    PARAMETER_STRING  = 1
 
 };
 
 static int tiparm_analyse( char const * capability, enum ParameterType ( & parameterTypes )[ TPARM_MAX_PARAM_COUNT ] ) {
 
     int parameterCount = 0;
+    int lpop = -1;
 
-    for ( int t = 0; capability[ t ]; ++ t ) {
+    for ( int t = 0; capability[ t ]; ++t ) {
 
         if ( capability[ t ] != '%' )
             continue;
@@ -33,11 +32,29 @@ static int tiparm_analyse( char const * capability, enum ParameterType ( & param
 
             case 'l':
             case 's': {
-                parameterTypes[ parameterCount++ ] = PARAMETER_STRING;
+                if ( lpop > 0 ) {
+                    if ( lpop <= TPARM_MAX_PARAM_COUNT ) {
+                        parameterTypes[ lpop - 1 ] = PARAMETER_STRING;
+                    } else {
+                        Nan::ThrowTypeError( "unsupported capability, too much arguments" );
+                    }
+                }
             } break;
 
             case 'p': {
-                parameterTypes[ parameterCount++ ] = PARAMETER_INTEGER;
+                ++t;
+                if ( capability[ t ] < '0' || capability[ t ] > '9' ) {
+                    Nan::ThrowTypeError( "unsupported capability, invalid syntax" );
+                } else {
+                    lpop = capability[ t ] - '0';
+                    if (lpop > parameterCount) {
+                        parameterCount = lpop;
+                    }
+                }
+            } break;
+
+            default: {
+                lpop = -1;
             } break;
 
         }
@@ -53,7 +70,7 @@ static v8::Local< v8::Value > compile( char const * capability, Nan::FunctionCal
     if ( ! capability )
         return Nan::Null( );
 
-    enum ParameterType parameterTypes[ TPARM_MAX_PARAM_COUNT ] = { PARAMETER_UNKNOWN };
+    enum ParameterType parameterTypes[ TPARM_MAX_PARAM_COUNT ] = {};
     int parameterCount = tiparm_analyse( capability, parameterTypes );
 
     if ( args.Length( ) - 1 < parameterCount )
@@ -84,12 +101,6 @@ static v8::Local< v8::Value > compile( char const * capability, Nan::FunctionCal
                 v8::Local< v8::Uint32 > asInteger = args[ t + 1 ]->ToUint32( );
 
                 parametersAsIntegers[ t ] = asInteger->Value( );
-
-            } break;
-
-            default: {
-
-                Nan::ThrowTypeError( "unsupported parameter type" );
 
             } break;
 
