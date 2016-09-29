@@ -1,17 +1,15 @@
 {
-
-    "version" : "0.0.3",
-    "license" : "MIT",
-
-    "name" : "node-tput",
-    "description" : "Node binding around tput",
-    "author" : "Maël Nison <nison.mael@gmail.com>",
-
-    "repository" : {
-        "type" : "git",
-        "url" : "https://github.com/arcanis/node-tput"
-    },
-
-    "main" : "./build/Release/tput"
-
+  "version": "0.0.4",
+  "license": "MIT",
+  "name": "node-tput",
+  "description": "Node binding around tput",
+  "author": "Maël Nison <nison.mael@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/arcanis/node-tput"
+  },
+  "main": "./build/Release/tput",
+  "dependencies": {
+    "nan": "^2.4.0"
+  }
 }

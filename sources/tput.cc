@@ -1,5 +1,4 @@
-#include <node.h>
-#include <v8.h>
+#include <nan.h>
 
 #include <errno.h>
 #include <cstdlib>
@@ -8,126 +7,135 @@
 #include <curses.h>
 #include <term.h>
 
-using namespace v8;
+#define TPARM_MAX_PARAM_COUNT   9
+#define TPARM_MAX_PARAM_LENGTH  50
+#define TPARM_MAX_OUTPUT_LENGTH 50
 
-#define TPARM_MAX 9
+enum ParameterType {
 
-#define NODE_THROW( str ) do {                          \
-    ThrowException( Exception::TypeError( String::New( str ) ) ); \
-    return scope.Close( Undefined( ) );                           \
-} while ( 0 )
+    PARAMETER_UNKNOWN,
 
-static int ti_parm_analyse( const char *str, int *piss, int piss_len )
-{
-    int nparm, lpop;
-    char c;
+    PARAMETER_STRING,
+    PARAMETER_INTEGER
 
-    nparm = 0;
-    lpop = -1;
+};
 
-    while ( ( c = *str++ ) != '\0' ) {
+static int tiparm_analyse( char const * capability, enum ParameterType ( & parameterTypes )[ TPARM_MAX_PARAM_COUNT ] ) {
 
-        if ( c != '%' )
+    int parameterCount = 0;
+
+    for ( int t = 0; capability[ t ]; ++ t ) {
+
+        if ( capability[ t ] != '%' )
             continue;
 
-        c = *str++;
-
-        switch ( c ) {
+        switch ( capability[ ++t ] ) {
 
             case 'l':
-            case 's':
-                if ( lpop > 0 ) {
-                    if ( lpop <= piss_len ) {
-                        piss[ lpop - 1 ] = 1;
-                    } else if ( piss ) {
-                        errno = E2BIG;
-                    }
-                }
-            break;
+            case 's': {
+                parameterTypes[ parameterCount++ ] = PARAMETER_STRING;
+            } break;
 
-            case 'p':
-                c = *str++;
-                if ( c < '1' || c > '9' ) {
-                    errno = EINVAL;
-                    continue;
-                } else {
-                    lpop = c - '0';
-                    if ( lpop > nparm ) {
-                        nparm = lpop;
-                    }
-                }
-            break;
-
-            default:
-                lpop = -1;
-            break ;
+            case 'p': {
+                parameterTypes[ parameterCount++ ] = PARAMETER_INTEGER;
+            } break;
 
         }
+
     }
 
-    return nparm;
+    return parameterCount;
+
 }
 
-static Local< Value > compile( char const * capability, Arguments const & args ) {
-
-    HandleScope scope;
+static v8::Local< v8::Value > compile( char const * capability, Nan::FunctionCallbackInfo< v8::Value > const & args ) {
 
     if ( ! capability )
-        return scope.Close( Null( ) );
+        return Nan::Null( );
 
-    int pnum, pdef[ TPARM_MAX ] = { 0 };
+    enum ParameterType parameterTypes[ TPARM_MAX_PARAM_COUNT ] = { PARAMETER_UNKNOWN };
+    int parameterCount = tiparm_analyse( capability, parameterTypes );
 
-    int fu[ TPARM_MAX ];
-    pnum = ti_parm_analyse( capability, fu, TPARM_MAX );
+    if ( args.Length( ) - 1 < parameterCount )
+        Nan::ThrowTypeError( "not enough parameters" );
 
-    char pstr[ pnum ][ 50 ];
-    int  pint[ pnum ];
+    if ( args.Length( ) - 1 > parameterCount )
+        Nan::ThrowTypeError( "too many parameters" );
 
-    for ( int t = 0; t < pnum; ++ t ) {
-        if ( pdef[ t ] /*string*/ ) {
-            args[ t + 1 ]->ToString( )->WriteAscii( pstr[ t ], 0, sizeof( pstr[ t ] - 1 ) );
-        } else /*number*/ {
-            pint[ t ] = args[ t + 1 ]->ToUint32( )->Value( );
+    int parametersAsIntegers[ TPARM_MAX_PARAM_COUNT ] = { 0 };
+    char parametersAsStrings[ TPARM_MAX_PARAM_COUNT ][ TPARM_MAX_PARAM_LENGTH + 1 ] = { { 0 } };
+
+    for ( int t = 0; t < parameterCount; ++ t ) {
+        switch ( parameterTypes[ t ] ) {
+
+            case PARAMETER_STRING: {
+
+                v8::Local< v8::String > asString = args[ t + 1 ]->ToString( );
+
+                if ( asString->Length( ) > TPARM_MAX_PARAM_LENGTH )
+                    Nan::ThrowTypeError( "unsupported parameter length" );
+
+                asString->WriteOneByte( reinterpret_cast< uint8_t * >( parametersAsStrings[ t ] ) );
+
+            } break;
+
+            case PARAMETER_INTEGER: {
+
+                v8::Local< v8::Uint32 > asInteger = args[ t + 1 ]->ToUint32( );
+
+                parametersAsIntegers[ t ] = asInteger->Value( );
+
+            } break;
+
+            default: {
+
+                Nan::ThrowTypeError( "unsupported parameter type" );
+
+            } break;
+
         }
     }
 
-    #define P( N ) ( N < pnum ? ( pdef[ N ] ? ( long )( & pstr[ N ] ) : pint[ N ] ) : 0 )
-    char * sequence = tiparm( capability, P( 0 ), P( 1 ), P( 2 ), P( 3 ), P( 4 ), P( 5 ), P( 6 ), P( 7 ) );
+    #define P( N ) ( N < parameterCount ? ( parameterTypes[ N ] == PARAMETER_STRING ? (long) parametersAsStrings[ N ] : parameterTypes[ N ] == PARAMETER_INTEGER ? parametersAsIntegers[ N ] : 0 ) : 0 )
+    char const * sequence = tiparm( capability, P( 0 ), P( 1 ), P( 2 ), P( 3 ), P( 4 ), P( 5 ), P( 6 ), P( 7 ), P( 8 ) );
 
-    return scope.Close( String::New( sequence ) );
+    return Nan::New( sequence ).ToLocalChecked();
 
 }
 
-Handle< Value > wrapper( Arguments const & args ) {
-
-    HandleScope scope;
+void wrapper( Nan::FunctionCallbackInfo< v8::Value > const & args ) {
 
     if ( args.Length( ) < 1 )
-        NODE_THROW( "missing argument" );
+        Nan::ThrowTypeError( "missing argument" );
 
-    char label[ 50 ];
+    v8::Local< v8::String > labelAsString = args[ 0 ]->ToString( );
 
-    args[ 0 ]->ToString( )->WriteAscii( label, 0, sizeof( label ) - 1 );
+    char label[ labelAsString->Length( ) + 1 ];
+    args[ 0 ]->ToString( )->WriteOneByte( reinterpret_cast< uint8_t * >( &label[0] ) );
 
     char * capability = tigetstr( label );
-    if ( capability != reinterpret_cast< char * >( -1 ) )
-        return scope.Close( compile( capability, args ) );
+    if ( capability != reinterpret_cast< char * >( -1 ) ) {
+        args.GetReturnValue().Set( compile( capability, args ) );
+        return;
+    }
 
     int value = tigetnum( label );
-    if ( value != -1 && value != -2 )
-        return scope.Close( Number::New( value ) );
+    if ( value != -1 && value != -2 ) {
+        args.GetReturnValue().Set( Nan::New( value ) );
+        return;
+    }
 
-    NODE_THROW( "invalid capability label" );
+    Nan::ThrowTypeError( "invalid capability label" );
 
 }
 
-void init( Handle< Object > exports, Handle< Object > module ) {
+void init( v8::Handle< v8::Object > exports, v8::Handle< v8::Object > module ) {
 
     int setuptermError;
 
     setupterm( 0, 0, &setuptermError );
 
-    module->Set( String::NewSymbol( "exports" ), FunctionTemplate::New( wrapper )->GetFunction( ) );
+    module->Set( Nan::New( "exports" ).ToLocalChecked( ), Nan::New< v8::FunctionTemplate >( wrapper )->GetFunction( ) );
 
 }
 
